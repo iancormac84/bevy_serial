@@ -112,30 +112,37 @@ pub use mio_serial::{DataBits, FlowControl, Parity, StopBits};
 
 use bevy::app::{App, Plugin, PostUpdate, PreUpdate};
 use bevy::ecs::event::{Event, EventReader, EventWriter};
-use bevy::ecs::system::{Res, ResMut, Resource};
+use bevy::ecs::system::{In, IntoSystem, Res, ResMut, Resource};
 use mio::{Events, Interest, Poll, Token};
 use mio_serial::SerialStream;
 use once_cell::sync::OnceCell;
 use std::collections::HashMap;
 use std::io::{ErrorKind, Read, Write};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 /// Plugin that can be added to Bevy
 pub struct SerialPlugin {
     pub settings: Vec<SerialSetting>,
-    pub on_read_error: Box<dyn Fn(std::io::Error)>,
-    pub on_write_error: Box<dyn Fn(std::io::Error)>,
+    pub on_read_error: Arc<dyn Fn(In<std::io::Result<()>>) + Send + Sync>,
+    pub on_write_error: Arc<dyn Fn(In<std::io::Result<()>>) + Send + Sync>,
 }
 
 impl SerialPlugin {
-    pub fn new(port_name: &str, baud_rate: u32) -> Self {
+    pub fn new(
+        port_name: &str,
+        baud_rate: u32,
+        on_read_error: Arc<dyn Fn(In<std::io::Result<()>>) + Send + Sync>,
+        on_write_error: Arc<dyn Fn(In<std::io::Result<()>>) + Send + Sync>,
+    ) -> Self {
         Self {
             settings: vec![SerialSetting {
                 port_name: port_name.to_string(),
                 baud_rate,
                 ..Default::default()
             }],
+            on_read_error,
+            on_write_error,
         }
     }
 }
@@ -277,8 +284,8 @@ impl Plugin for SerialPlugin {
             .insert_resource(indices)
             .add_event::<SerialReadEvent>()
             .add_event::<SerialWriteEvent>()
-            .add_systems(PreUpdate, read_serial)
-            .add_systems(PostUpdate, write_serial);
+            .add_systems(PreUpdate, read_serial.pipe(self.on_read_error))
+            .add_systems(PostUpdate, write_serial.pipe(self.on_write_error));
     }
 }
 
@@ -351,7 +358,10 @@ fn read_serial(
 
 /// Write bytes to serial port.
 /// The bytes are sent via `SerialWriteEvent` with label of serial port.
-fn write_serial(mut ev_write_serial: EventReader<SerialWriteEvent>, indices: Res<Indices>) -> std::io::Result<()> {
+fn write_serial(
+    mut ev_write_serial: EventReader<SerialWriteEvent>,
+    indices: Res<Indices>,
+) -> std::io::Result<()> {
     if !indices.0.is_empty() {
         for SerialWriteEvent(label, buffer) in ev_write_serial.read() {
             // get index of label
