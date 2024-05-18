@@ -122,9 +122,10 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 /// Plugin that can be added to Bevy
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SerialPlugin {
     pub settings: Vec<SerialSetting>,
+    pub on_read_error: Box<dyn Fn(std::io::Error)>,
+    pub on_write_error: Box<dyn Fn(std::io::Error)>,
 }
 
 impl SerialPlugin {
@@ -287,7 +288,7 @@ fn read_serial(
     mut ev_receive_serial: EventWriter<SerialReadEvent>,
     mut mio_ctx: ResMut<MioContext>,
     indices: Res<Indices>,
-) {
+) -> std::io::Result<()> {
     if !indices.0.is_empty() {
         // poll serial read events
         mio_ctx.poll();
@@ -345,11 +346,12 @@ fn read_serial(
             }
         }
     }
+    Ok(())
 }
 
 /// Write bytes to serial port.
 /// The bytes are sent via `SerialWriteEvent` with label of serial port.
-fn write_serial(mut ev_write_serial: EventReader<SerialWriteEvent>, indices: Res<Indices>) {
+fn write_serial(mut ev_write_serial: EventReader<SerialWriteEvent>, indices: Res<Indices>) -> std::io::Result<()> {
     if !indices.0.is_empty() {
         for SerialWriteEvent(label, buffer) in ev_write_serial.read() {
             // get index of label
@@ -404,4 +406,5 @@ fn write_serial(mut ev_write_serial: EventReader<SerialWriteEvent>, indices: Res
             }
         }
     }
+    Ok(())
 }
